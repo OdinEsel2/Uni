@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Dropping Balls — Chaos in a Circle</title>
+<style>
+  :root {
+    --panel-bg: rgba(14, 16, 22, 0.82);
+    --panel-bd: rgba(255, 255, 255, 0.08);
+    --txt: #d8dee9;
+    --txt-dim: #8a93a6;
+    --accent: #8fb6ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--txt);
+    -webkit-font-smoothing: antialiased;
+  }
+  #view { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
+
+  #panel {
+    position: fixed; top: 14px; left: 14px; width: 288px;
+    max-height: calc(100vh - 28px); overflow-y: auto;
+    background: var(--panel-bg); border: 1px solid var(--panel-bd);
+    border-radius: 14px; padding: 14px 16px 16px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+    user-select: none; z-index: 10;
+    transition: transform .25s ease, opacity .25s ease;
+  }
+  #panel.collapsed { transform: translateX(calc(-100% - 20px)); opacity: 0; }
+  #panel::-webkit-scrollbar { width: 8px; }
+  #panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 8px; }
+
+  .title { font-size: 14px; font-weight: 600; letter-spacing: .2px; display: flex; align-items: center; gap: 8px; }
+  .title .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .sub { font-size: 11px; color: var(--txt-dim); margin: 2px 0 12px; }
+
+  .group { margin: 12px 0 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--txt-dim); }
+  .row { margin: 9px 0; }
+  .row .lab { display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 4px; }
+  .row .lab .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 4px;
+    background: rgba(255,255,255,.12); border-radius: 4px; outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: #eef3ff; box-shadow: 0 0 0 3px rgba(143,182,255,.25); cursor: pointer;
+  }
+  input[type=number], select {
+    width: 100%; background: rgba(255,255,255,.05); border: 1px solid var(--panel-bd);
+    color: var(--txt); border-radius: 8px; padding: 7px 9px; font-size: 13px; outline: none;
+    font-variant-numeric: tabular-nums; -webkit-appearance: none; appearance: none; cursor: pointer;
+  }
+  select { background-image: linear-gradient(45deg, transparent 50%, var(--txt-dim) 50%), linear-gradient(135deg, var(--txt-dim) 50%, transparent 50%); background-position: calc(100% - 16px) 14px, calc(100% - 11px) 14px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  select option { background: #11141c; }
+  input[type=number]:focus, select:focus { border-color: var(--accent); }
+
+  .btnrow { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 6px; }
+  .btnrow.three { grid-template-columns: 1fr 1fr 1fr; }
+  button {
+    background: rgba(255,255,255,.06); border: 1px solid var(--panel-bd); color: var(--txt);
+    border-radius: 8px; padding: 8px 6px; font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  button:hover { background: rgba(255,255,255,.12); }
+  button.primary { background: rgba(143,182,255,.16); border-color: rgba(143,182,255,.4); color: #eaf1ff; }
+  button.rec { background: rgba(255,90,90,.16); border-color: rgba(255,90,90,.45); color: #ffd9d9; }
+
+  .quick { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+  .quick button { flex: 1 1 auto; padding: 5px 4px; font-size: 11px; }
+
+  #hud {
+    position: fixed; bottom: 12px; left: 14px; z-index: 10;
+    font-size: 11px; color: var(--txt-dim); font-variant-numeric: tabular-nums;
+    background: rgba(14,16,22,.55); padding: 5px 9px; border-radius: 8px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  #recDot {
+    display: none; position: fixed; top: 16px; right: 16px; z-index: 11;
+    align-items: center; gap: 7px; font-size: 12px; color: #ffb3b3;
+    background: rgba(30,10,10,.6); padding: 6px 11px; border-radius: 20px;
+  }
+  #recDot.on { display: flex; }
+  #recDot .blink { width: 9px; height: 9px; border-radius: 50%; background: #ff5a5a; box-shadow: 0 0 10px #ff5a5a; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  #toggleBtn {
+    position: fixed; top: 14px; left: 14px; z-index: 9; display: none;
+    background: var(--panel-bg); border: 1px solid var(--panel-bd); color: var(--txt);
+    width: 34px; height: 34px; border-radius: 10px; cursor: pointer; font-size: 16px;
+  }
+  body.panel-hidden #toggleBtn { display: block; }
+  .hint { font-size: 10.5px; color: var(--txt-dim); margin-top: 10px; line-height: 1.5; }
+  kbd { background: rgba(255,255,255,.08); border-radius: 4px; padding: 1px 5px; font-size: 10px; font-family: inherit; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<button id="toggleBtn" title="Show controls">☰</button>
+
+<div id="recDot"><span class="blink"></span><span id="recTime">REC 0.0s</span></div>
+
+<div id="panel">
+  <div class="title"><span class="dot"></span> Dropping Balls</div>
+  <div class="sub">Chaos in a circle · additive light trails</div>
+
+  <div class="group">Simulation</div>
+  <div class="row">
+    <div class="lab"><span>Number of balls</span><span class="val" id="ballsPow"></span></div>
+    <input type="number" id="balls" min="1" max="2000000" step="1" value="1024" />
+    <div class="quick">
+      <button data-balls="256">2⁸</button>
+      <button data-balls="1024">2¹⁰</button>
+      <button data-balls="4096">2¹²</button>
+      <button data-balls="16384">2¹⁴</button>
+      <button data-balls="65536">2¹⁶</button>
+    </div>
+  </div>
+
+  <div class="group">Initial Drop · Noise</div>
+  <div class="row">
+    <div class="lab"><span>Spawn shape</span></div>
+    <select id="shape">
+      <option value="line" selected>Line — uniform (smooth curves)</option>
+      <option value="disk">Disk — random (clumps)</option>
+      <option value="ring">Ring</option>
+    </select>
+  </div>
+  <div class="row">
+    <div class="lab"><span>Position spread</span><span class="val" id="posNoiseV"></span></div>
+    <input type="range" id="posNoise" min="0" max="1000" value="680" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Velocity noise</span><span class="val" id="velNoiseV"></span></div>
+    <input type="range" id="velNoise" min="0" max="1000" value="0" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Drop height</span><span class="val" id="dropYV"></span></div>
+    <input type="range" id="dropY" min="-95" max="95" value="-55" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Launch speed</span><span class="val" id="launchV"></span></div>
+    <input type="range" id="launch" min="0" max="600" value="170" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Launch angle</span><span class="val" id="angleV"></span></div>
+    <input type="range" id="angle" min="0" max="360" value="8" />
+  </div>
+
+  <div class="group">Physics</div>
+  <div class="row">
+    <div class="lab"><span>Gravity</span><span class="val" id="gravV"></span></div>
+    <input type="range" id="grav" min="0" max="1200" value="420" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Bounce (restitution)</span><span class="val" id="restV"></span></div>
+    <input type="range" id="rest" min="700" max="1000" value="1000" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Speed</span><span class="val" id="simV"></span></div>
+    <input type="range" id="sim" min="10" max="300" value="100" />
+  </div>
+
+  <div class="group">Look</div>
+  <div class="row">
+    <div class="lab"><span>Trail length</span><span class="val" id="trailV"></span></div>
+    <input type="range" id="trail" min="0" max="1000" value="780" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Glow size</span><span class="val" id="glowV"></span></div>
+    <input type="range" id="glow" min="2" max="600" value="90" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Brightness</span><span class="val" id="brightV"></span></div>
+    <input type="range" id="bright" min="1" max="1000" value="380" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Hue</span><span class="val" id="hueV"></span></div>
+    <input type="range" id="hue" min="0" max="360" value="212" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Color saturation</span><span class="val" id="satV"></span></div>
+    <input type="range" id="sat" min="0" max="100" value="55" />
+  </div>
+
+  <div class="btnrow three">
+    <button id="redrop" class="primary">↻ Re-drop</button>
+    <button id="rewind">⏪ Rewind</button>
+    <button id="pause">⏸ Pause</button>
+  </div>
+  <div class="btnrow three" style="margin-top:7px">
+    <button id="record" class="rec">● Record</button>
+    <button id="snap">⤓ PNG</button>
+    <button id="hidePanel">⤡ Hide</button>
+  </div>
+
+  <div class="hint">
+    <kbd>Space</kbd> re-drop · <kbd>←</kbd> rewind · <kbd>P</kbd> pause · <kbd>R</kbd> record · <kbd>H</kbd> hide<br>
+    Recording captures the canvas to a video file (WebM/MP4). Use Chrome for best results.
+  </div>
+</div>
+
+<div id="hud"></div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById('view');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+// ---------- responsive canvas ----------
+let W = 0, H = 0, DPR = 1;
+let cx = 0, cy = 0, R = 0;          // circle center + radius (in device px)
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.round(window.innerWidth * DPR);
+  H = Math.round(window.innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  cx = W / 2; cy = H / 2;
+  R = Math.min(W, H) * 0.46;
+  // clear to black on resize
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+}
+window.addEventListener('resize', resize);
+
+// ---------- controls ----------
+const el = id => document.getElementById(id);
+const C = {
+  balls:   el('balls'),
+  posNoise:el('posNoise'), velNoise: el('velNoise'),
+  dropY:   el('dropY'), launch: el('launch'), angle: el('angle'),
+  grav:    el('grav'), rest: el('rest'), sim: el('sim'),
+  trail:   el('trail'), glow: el('glow'), bright: el('bright'),
+  hue:     el('hue'), sat: el('sat'),
+};
+
+// Map a 0..1000 slider to an exponential value between lo and hi.
+const expMap = (s, lo, hi) => lo * Math.pow(hi / lo, s / 1000);
+
+// Derived parameters read fresh each frame so sliders are live.
+function params() {
+  const posFrac = C.posNoise.value == 0 ? 0 : expMap(+C.posNoise.value, 1e-5, 0.8); // fraction of R
+  const velMag  = C.velNoise.value == 0 ? 0 : expMap(+C.velNoise.value, 1e-3, 300);  // px/s spread
+  return {
+    posNoise: posFrac * R,
+    velNoise: velMag * DPR,
+    dropY:    (+C.dropY.value / 100) * R,        // offset from center along y
+    launch:   (+C.launch.value) * DPR,           // px/s
+    angle:    (+C.angle.value) * Math.PI / 180,
+    grav:     (+C.grav.value) * DPR,             // px/s^2
+    rest:     (+C.rest.value) / 1000,
+    sim:      (+C.sim.value) / 100,              // time multiplier
+    trail:    (+C.trail.value) / 1000,           // 0..1 persistence
+    glow:     (+C.glow.value) / 10 * DPR,        // sprite radius px
+    bright:   expMap(+C.bright.value, 0.01, 1.2),
+    hue:      +C.hue.value,
+    sat:      +C.sat.value,
+  };
+}
+
+// Live label updates
+function refreshLabels() {
+  const p = params();
+  el('ballsPow').textContent = '= ' + powLabel(getBallCount());
+  el('posNoiseV').textContent = C.posNoise.value == 0 ? 'off' : (p.posNoise / DPR).toFixed(2) + ' px';
+  el('velNoiseV').textContent = C.velNoise.value == 0 ? 'off' : (p.velNoise / DPR).toFixed(1) + ' px/s';
+  el('dropYV').textContent   = (+C.dropY.value) + '%';
+  el('launchV').textContent  = (+C.launch.value) + ' px/s';
+  el('angleV').textContent   = (+C.angle.value) + '°';
+  el('gravV').textContent    = (+C.grav.value);
+  el('restV').textContent    = p.rest.toFixed(3);
+  el('simV').textContent     = p.sim.toFixed(2) + '×';
+  el('trailV').textContent   = Math.round(p.trail * 100) + '%';
+  el('glowV').textContent    = (p.glow / DPR).toFixed(1) + ' px';
+  el('brightV').textContent  = p.bright.toFixed(2);
+  el('hueV').textContent     = p.hue + '°';
+  el('satV').textContent     = p.sat + '%';
+}
+
+function powLabel(n) {
+  const e = Math.log2(n);
+  if (Number.isInteger(e)) return '2' + sup(e);
+  return n.toLocaleString();
+}
+function sup(n) {
+  const map = {'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','-':'⁻'};
+  return String(n).split('').map(c => map[c] || c).join('');
+}
+function getBallCount() {
+  let n = Math.floor(+C.balls.value);
+  if (!Number.isFinite(n) || n < 1) n = 1;
+  if (n > 2000000) n = 2000000;
+  return n;
+}
+
+// ---------- particle state ----------
+let N = 0;
+let px, py, vx, vy;   // Float32Arrays
+
+// ---------- rewind via deterministic replay ----------
+// The sim is deterministic given the original drop + the (dt, gravity,
+// restitution) used on every frame. So instead of storing every frame's full
+// state (which would cap how far back we can go), we keep:
+//   • initState  — the exact original drop  (O(N), never discarded)
+//   • ctrl*       — a tiny per-frame log of what physics was applied (~12 B/frame)
+//   • checkpoints — a bounded set of full snapshots, just to make rewind fast
+// Any frame back to the original drop can always be reconstructed by loading
+// the nearest checkpoint and replaying the control log forward to it.
+let rewinding = false;
+let frameIdx = 0;                 // current frame number; 0 = original drop
+let initState = null;             // Float32Array(4N) of the drop
+let ctrlDt = [], ctrlG = [], ctrlE = [];   // per-frame physics inputs
+let checkpoints = new Map();      // frame -> Float32Array(4N)
+let chkStride = 20;               // frames between checkpoints (grows if needed)
+let maxChk = 64;                  // max checkpoints kept (memory bound)
+const CHK_BUDGET = 96 * 1024 * 1024;
+
+function snapshot() {
+  const s = new Float32Array(N * 4);
+  s.set(px, 0); s.set(py, N); s.set(vx, N * 2); s.set(vy, N * 3);
+  return s;
+}
+function restore(s) {
+  px.set(s.subarray(0, N));
+  py.set(s.subarray(N, N * 2));
+  vx.set(s.subarray(N * 2, N * 3));
+  vy.set(s.subarray(N * 3, N * 4));
+}
+function resetHistory() {
+  frameIdx = 0;
+  ctrlDt.length = ctrlG.length = ctrlE.length = 0;
+  chkStride = 20;
+  maxChk = Math.max(16, Math.min(1024, Math.floor(CHK_BUDGET / (N * 16))));
+  initState = snapshot();
+  checkpoints = new Map([[0, initState]]);
+  setRewind(false);
+}
+// record one forward frame
+function recordFrame(dt, g, e) {
+  ctrlDt[frameIdx] = dt; ctrlG[frameIdx] = g; ctrlE[frameIdx] = e;
+  frameIdx++;
+  if (frameIdx % chkStride === 0 && !checkpoints.has(frameIdx)) {
+    checkpoints.set(frameIdx, snapshot());
+    while (checkpoints.size > maxChk) {     // thin out, keeping them spread evenly
+      chkStride *= 2;
+      for (const f of [...checkpoints.keys()]) {
+        if (f !== 0 && f % chkStride !== 0) checkpoints.delete(f);
+      }
+    }
+  }
+}
+// if we rewound and then move forward again, the old future is invalid
+function truncateFuture() {
+  if (ctrlDt.length > frameIdx) {
+    ctrlDt.length = ctrlG.length = ctrlE.length = frameIdx;
+    for (const f of [...checkpoints.keys()]) if (f > frameIdx) checkpoints.delete(f);
+  }
+}
+// reconstruct the state at `target` from the nearest checkpoint at/below it
+function reconstruct(target) {
+  let c = 0;
+  for (const f of checkpoints.keys()) if (f <= target && f > c) c = f;
+  restore(checkpoints.get(c));
+  for (let f = c; f < target; f++) stepCore(ctrlDt[f], ctrlG[f], ctrlE[f]);
+}
+function setRewind(on) {
+  rewinding = on && frameIdx > 0;
+  el('rewind').textContent = rewinding ? '⏹ Stop' : '⏪ Rewind';
+  el('rewind').classList.toggle('primary', rewinding);
+}
+
+function reseed() {
+  N = getBallCount();
+  px = new Float32Array(N); py = new Float32Array(N);
+  vx = new Float32Array(N); vy = new Float32Array(N);
+  const p = params();
+  const ox = cx, oy = cy + p.dropY;
+  const ux = Math.cos(p.angle), uy = Math.sin(p.angle);   // launch direction (unit)
+  const baseVx = ux * p.launch, baseVy = uy * p.launch;
+  const shape = el('shape').value;
+  for (let i = 0; i < N; i++) {
+    let x, y, dvx = 0, dvy = 0;
+    if (shape === 'line') {
+      // evenly spaced along a horizontal line — a smooth 1-parameter family, so
+      // the balls evolve into clean continuous curves instead of random clumps.
+      const s = N > 1 ? (i / (N - 1) - 0.5) : 0;       // -0.5 .. 0.5, uniform
+      x = ox + s * (2 * p.posNoise);
+      y = oy;
+      const sp = s * (2 * p.velNoise);                 // smooth speed gradient
+      dvx = ux * sp; dvy = uy * sp;
+    } else if (shape === 'ring') {
+      const a = (i / N) * Math.PI * 2;                 // evenly spaced on a circle
+      x = ox + Math.cos(a) * p.posNoise;
+      y = oy + Math.sin(a) * p.posNoise;
+      dvx = Math.cos(a) * p.velNoise; dvy = Math.sin(a) * p.velNoise;
+    } else {                                           // disk — random scatter
+      const a = Math.random() * Math.PI * 2;
+      const r = p.posNoise * Math.sqrt(Math.random());
+      x = ox + Math.cos(a) * r; y = oy + Math.sin(a) * r;
+      const va = Math.random() * Math.PI * 2;
+      const vr = p.velNoise * Math.sqrt(Math.random());
+      dvx = Math.cos(va) * vr; dvy = Math.sin(va) * vr;
+    }
+    // keep inside the circle
+    const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+    if (d > R * 0.999) { const k = (R * 0.999) / d; x = cx + dx * k; y = cy + dy * k; }
+    px[i] = x; py[i] = y;
+    vx[i] = baseVx + dvx; vy[i] = baseVy + dvy;
+  }
+  resetHistory();               // snapshot the original drop for rewind
+  // clear canvas so the new drop starts fresh
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ---------- physics step ----------
+const SUB = 4;                   // substeps to avoid tunneling through the wall
+function stepCore(dt, g, e) {
+  const h = dt / SUB;
+  for (let s = 0; s < SUB; s++) {
+    for (let i = 0; i < N; i++) {
+      let x = px[i], y = py[i], ux = vx[i], uy = vy[i];
+      uy += g * h;
+      x += ux * h; y += uy * h;
+      // collide with inner circle wall
+      const dx = x - cx, dy = y - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > R * R) {
+        const d = Math.sqrt(d2) || 1;
+        const nx = dx / d, ny = dy / d;          // outward normal
+        const vn = ux * nx + uy * ny;            // normal component
+        if (vn > 0) {                            // moving outward → reflect
+          ux -= (1 + e) * vn * nx;
+          uy -= (1 + e) * vn * ny;
+        }
+        // push back to the boundary
+        x = cx + nx * R; y = cy + ny * R;
+      }
+      px[i] = x; py[i] = y; vx[i] = ux; vy[i] = uy;
+    }
+  }
+}
+
+// ---------- glow sprite ----------
+let sprite = document.createElement('canvas');
+let sctx = sprite.getContext('2d');
+let spriteKey = '';
+function buildSprite(p) {
+  const key = p.glow + '|' + p.hue + '|' + p.sat;
+  if (key === spriteKey) return;
+  spriteKey = key;
+  const rad = Math.max(2, p.glow);
+  const size = Math.ceil(rad * 2);
+  sprite.width = size; sprite.height = size;
+  const g = sctx.createRadialGradient(rad, rad, 0, rad, rad, rad);
+  const h = p.hue, s = p.sat;
+  g.addColorStop(0.0, `hsla(${h}, ${s*0.5}%, 100%, 1)`);
+  g.addColorStop(0.18, `hsla(${h}, ${s}%, 82%, 0.55)`);
+  g.addColorStop(0.45, `hsla(${h}, ${s}%, 62%, 0.16)`);
+  g.addColorStop(1.0, `hsla(${h}, ${s}%, 50%, 0)`);
+  sctx.clearRect(0, 0, size, size);
+  sctx.fillStyle = g;
+  sctx.fillRect(0, 0, size, size);
+}
+
+// ---------- render ----------
+function drawCircleOutline() {
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1, 1.1 * DPR);
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.shadowColor = 'rgba(180,200,255,0.5)';
+  ctx.shadowBlur = 6 * DPR;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+function render(p) {
+  // fade previous frame to create trails (longer trail = lower fade alpha)
+  const fade = 1 - p.trail;            // trail 0 → fade 1 (no trails); trail 1 → fade 0 (infinite)
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = `rgba(0,0,0,${Math.max(0.012, fade)})`;
+  ctx.fillRect(0, 0, W, H);
+
+  // additive glowing balls
+  buildSprite(p);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = p.bright;
+  const rad = Math.max(2, p.glow);
+  const off = rad;
+  const img = sprite;
+  for (let i = 0; i < N; i++) {
+    ctx.drawImage(img, px[i] - off, py[i] - off);
+  }
+  ctx.globalAlpha = 1;
+
+  drawCircleOutline();
+}
+
+// ---------- main loop ----------
+let paused = false;
+let last = performance.now();
+let fps = 0, fpsT = 0, fpsN = 0;
+
+function frame(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;          // clamp big gaps (tab switches)
+
+  const p = params();
+  if (rewinding) {
+    // step backwards toward the original drop
+    if (frameIdx > 0) { reconstruct(frameIdx - 1); frameIdx--; }
+    else setRewind(false);          // reached the original drop (frame 0)
+  } else if (!paused) {
+    truncateFuture();               // discard invalid future if we'd rewound
+    const dtEff = dt * p.sim;
+    stepCore(dtEff, p.grav, p.rest);
+    recordFrame(dtEff, p.grav, p.rest);
+  }
+  render(p);
+
+  // fps + hud
+  fpsN++; fpsT += dt;
+  if (fpsT > 0.5) { fps = fpsN / fpsT; fpsN = 0; fpsT = 0; }
+  const state = rewinding ? ' · ◀ rewind' : (paused ? ' · paused' : '');
+  el('hud').textContent =
+    `${N.toLocaleString()} balls · ${fps.toFixed(0)} fps · frame ${frameIdx.toLocaleString()}${state}${rec.active ? ' · ● REC' : ''}`;
+  if (rec.active) {
+    const t = (now - rec.start) / 1000;
+    el('recTime').textContent = `REC ${t.toFixed(1)}s`;
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- recording ----------
+const rec = { active: false, recorder: null, chunks: [], start: 0 };
+function pickMime() {
+  const opts = [
+    'video/mp4;codecs=h264',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
+  for (const m of opts) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return '';
+}
+function toggleRecord() {
+  if (rec.active) { rec.recorder.stop(); return; }
+  if (!canvas.captureStream || !window.MediaRecorder) {
+    alert('Video recording is not supported in this browser. Try Chrome.');
+    return;
+  }
+  const mime = pickMime();
+  const stream = canvas.captureStream(60);
+  rec.chunks = [];
+  rec.recorder = new MediaRecorder(stream, {
+    mimeType: mime || undefined,
+    videoBitsPerSecond: 24_000_000,
+  });
+  rec.recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+  rec.recorder.onstop = () => {
+    const type = rec.chunks[0]?.type || mime || 'video/webm';
+    const blob = new Blob(rec.chunks, { type });
+    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url; a.download = `dropping_balls_${ts}.${ext}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    rec.active = false;
+    el('recDot').classList.remove('on');
+    el('record').textContent = '● Record';
+    el('record').classList.add('rec');
+  };
+  rec.recorder.start();
+  rec.active = true; rec.start = performance.now();
+  el('recDot').classList.add('on');
+  el('record').textContent = '■ Stop';
+}
+
+function savePNG() {
+  const url = canvas.toDataURL('image/png');
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  a.href = url; a.download = `dropping_balls_${ts}.png`;
+  a.click();
+}
+
+// ---------- wiring ----------
+function hidePanel(hide) {
+  document.getElementById('panel').classList.toggle('collapsed', hide);
+  document.body.classList.toggle('panel-hidden', hide);
+}
+
+el('redrop').addEventListener('click', reseed);
+el('pause').addEventListener('click', () => {
+  paused = !paused;
+  el('pause').textContent = paused ? '▶ Resume' : '⏸ Pause';
+});
+el('rewind').addEventListener('click', () => setRewind(!rewinding));
+el('record').addEventListener('click', toggleRecord);
+el('snap').addEventListener('click', savePNG);
+el('hidePanel').addEventListener('click', () => hidePanel(true));
+el('toggleBtn').addEventListener('click', () => hidePanel(false));
+
+C.balls.addEventListener('change', () => { C.balls.value = getBallCount(); reseed(); refreshLabels(); });
+document.querySelectorAll('.quick button').forEach(b => {
+  b.addEventListener('click', () => { C.balls.value = b.dataset.balls; reseed(); refreshLabels(); });
+});
+
+// any slider change just updates labels live (no reseed needed except drop params)
+Object.values(C).forEach(input => {
+  input.addEventListener('input', refreshLabels);
+});
+// drop-related sliders re-seed so you can preview the new initial conditions
+['posNoise','velNoise','dropY','launch','angle'].forEach(id => {
+  C[id].addEventListener('change', reseed);
+});
+el('shape').addEventListener('change', reseed);
+
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ') { e.preventDefault(); reseed(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); setRewind(!rewinding); }
+  else if (k === 'p') { el('pause').click(); }
+  else if (k === 'r') { toggleRecord(); }
+  else if (k === 'h') { hidePanel(!document.getElementById('panel').classList.contains('collapsed')); }
+});
+
+// ---------- boot ----------
+resize();
+reseed();
+refreshLabels();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
