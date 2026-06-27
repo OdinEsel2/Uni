@@ -190,7 +190,19 @@
     <input type="range" id="sat" min="0" max="100" value="55" />
   </div>
 
-  <div class="btnrow three">
+  <div class="group">Render (offline)</div>
+  <div class="row">
+    <div class="lab"><span>Frames to render</span><span class="val" id="rframesV"></span></div>
+    <input type="number" id="rframes" min="1" max="36000" step="1" value="300" />
+  </div>
+  <div class="row">
+    <div class="lab"><span>Ball gravity <span style="color:var(--txt-dim)">· render only</span></span><span class="val" id="ballGravV"></span></div>
+    <input type="range" id="ballGrav" min="0" max="1000" value="0" />
+  </div>
+  <button id="render" class="primary" style="width:100%; margin-top:4px">⛶ Render first N frames → video</button>
+  <div id="rprog" class="hint" style="display:none; color:var(--accent)"></div>
+
+  <div class="btnrow three" style="margin-top:10px">
     <button id="redrop" class="primary">↻ Re-drop</button>
     <button id="rewind">⏪ Rewind</button>
     <button id="pause">⏸ Pause</button>
@@ -203,7 +215,7 @@
 
   <div class="hint">
     <kbd>Space</kbd> re-drop · <kbd>←</kbd> rewind · <kbd>P</kbd> pause · <kbd>R</kbd> record · <kbd>H</kbd> hide<br>
-    Recording captures the canvas to a video file (WebM/MP4). Use Chrome for best results.
+    Records/renders to MP4 (H.264) where supported, else WebM. Use Chrome for best results.
   </div>
 </div>
 
@@ -242,6 +254,7 @@ const C = {
   grav:    el('grav'), rest: el('rest'), sim: el('sim'),
   trail:   el('trail'), glow: el('glow'), bright: el('bright'),
   hue:     el('hue'), sat: el('sat'),
+  ballGrav: el('ballGrav'),
 };
 
 // Map a 0..1000 slider to an exponential value between lo and hi.
@@ -265,6 +278,9 @@ function params() {
     bright:   expMap(+C.bright.value, 0.01, 1.2),
     hue:      +C.hue.value,
     sat:      +C.sat.value,
+    // mutual ball-ball gravity strength (render only). DPR^2 keeps the visual
+    // effect consistent across screen pixel densities.
+    ballGrav: C.ballGrav.value == 0 ? 0 : expMap(+C.ballGrav.value, 1e2, 5e7) * DPR * DPR,
   };
 }
 
@@ -285,6 +301,9 @@ function refreshLabels() {
   el('brightV').textContent  = p.bright.toFixed(2);
   el('hueV').textContent     = p.hue + '°';
   el('satV').textContent     = p.sat + '%';
+  el('ballGravV').textContent = C.ballGrav.value == 0 ? 'off' : p.ballGrav.toExponential(1);
+  const rf = Math.max(1, Math.floor(+el('rframes').value) || 0);
+  el('rframesV').textContent = (rf / 60).toFixed(1) + 's @60fps';
 }
 
 function powLabel(n) {
@@ -451,6 +470,53 @@ function stepCore(dt, g, e) {
   }
 }
 
+// ---------- N-body ball gravity (render only) ----------
+// Every ball attracts every other ball. This is O(N^2), so it's far too heavy
+// for the live preview — it only runs inside the offline render.
+let gAx = null, gAy = null;
+function computeBallGravity(bg) {
+  if (!gAx || gAx.length !== N) { gAx = new Float32Array(N); gAy = new Float32Array(N); }
+  gAx.fill(0); gAy.fill(0);
+  const gp = bg / N;                       // per-pair strength, normalized by count
+  const soft = 6 * DPR, eps2 = soft * soft;  // softening so close pairs don't explode
+  for (let i = 0; i < N; i++) {
+    const xi = px[i], yi = py[i];
+    let axi = gAx[i], ayi = gAy[i];
+    for (let j = i + 1; j < N; j++) {
+      const dx = px[j] - xi, dy = py[j] - yi;
+      const r2 = dx * dx + dy * dy + eps2;
+      const inv = 1 / Math.sqrt(r2);
+      const f = gp * inv * inv * inv;      // gp / r^3  → accel = f * (dx,dy)
+      const fx = f * dx, fy = f * dy;
+      axi += fx; ayi += fy;                // Newton's 3rd law: apply to both
+      gAx[j] -= fx; gAy[j] -= fy;
+    }
+    gAx[i] = axi; gAy[i] = ayi;
+  }
+}
+// like stepCore, but also applies the precomputed ball-gravity acceleration
+function stepRender(dt, g, e, bg) {
+  const h = dt / SUB;
+  for (let s = 0; s < SUB; s++) {
+    for (let i = 0; i < N; i++) {
+      let x = px[i], y = py[i], ux = vx[i], uy = vy[i];
+      uy += g * h;
+      if (bg > 0) { ux += gAx[i] * h; uy += gAy[i] * h; }
+      x += ux * h; y += uy * h;
+      const dx = x - cx, dy = y - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > R * R) {
+        const d = Math.sqrt(d2) || 1;
+        const nx = dx / d, ny = dy / d;
+        const vn = ux * nx + uy * ny;
+        if (vn > 0) { ux -= (1 + e) * vn * nx; uy -= (1 + e) * vn * ny; }
+        x = cx + nx * R; y = cy + ny * R;
+      }
+      px[i] = x; py[i] = y; vx[i] = ux; vy[i] = uy;
+    }
+  }
+}
+
 // ---------- glow sprite ----------
 let sprite = document.createElement('canvas');
 let sctx = sprite.getContext('2d');
@@ -514,6 +580,9 @@ let last = performance.now();
 let fps = 0, fpsT = 0, fpsN = 0;
 
 function frame(now) {
+  // the offline render owns the canvas while it runs
+  if (rendering) { last = now; requestAnimationFrame(frame); return; }
+
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05;          // clamp big gaps (tab switches)
@@ -547,14 +616,28 @@ function frame(now) {
 // ---------- recording ----------
 const rec = { active: false, recorder: null, chunks: [], start: 0 };
 function pickMime() {
+  // Prefer a real MP4 (H.264). Modern Chrome/Edge/Safari support MediaRecorder
+  // MP4 output; we try the codec strings browsers actually accept. MOV
+  // (quicktime) and WebM are only fallbacks if MP4 is unavailable.
   const opts = [
+    'video/mp4;codecs=avc1.640028',   // H.264 High
+    'video/mp4;codecs=avc1.42E01E',   // H.264 Baseline
+    'video/mp4;codecs=avc1',
     'video/mp4;codecs=h264',
+    'video/mp4',
+    'video/quicktime',                // .mov (Safari, rarely)
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
     'video/webm',
   ];
   for (const m of opts) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
   return '';
+}
+// file extension matching the recorded container
+function extFor(type) {
+  if (type.includes('mp4')) return 'mp4';
+  if (type.includes('quicktime') || type.includes('mov')) return 'mov';
+  return 'webm';
 }
 function toggleRecord() {
   if (rec.active) { rec.recorder.stop(); return; }
@@ -573,7 +656,7 @@ function toggleRecord() {
   rec.recorder.onstop = () => {
     const type = rec.chunks[0]?.type || mime || 'video/webm';
     const blob = new Blob(rec.chunks, { type });
-    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const ext = extFor(type);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -599,6 +682,89 @@ function savePNG() {
   a.click();
 }
 
+// ---------- offline render (first N frames, deterministic, with ball gravity) ----------
+let rendering = false, renderStop = null;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function renderVideo() {
+  if (rendering) { renderStop && renderStop(); return; }
+  if (rec.active) { alert('Stop the live recording before rendering.'); return; }
+  if (!canvas.captureStream || !window.MediaRecorder) {
+    alert('Video rendering is not supported in this browser. Try Chrome.');
+    return;
+  }
+  const X = Math.max(1, Math.min(36000, Math.floor(+el('rframes').value) || 300));
+  const FPS = 60;
+  const p = params();
+  const dtEff = (1 / FPS) * p.sim;
+  const bg = p.ballGrav;
+
+  rendering = true; renderStop = null;
+  let aborted = false;
+  el('render').textContent = '■ Stop render';
+  el('rprog').style.display = 'block';
+  el('rprog').textContent = 'Preparing…';
+
+  // remember the live state so we can drop the user back exactly where they were
+  const saved = snapshot(), savedFrame = frameIdx;
+
+  // pull one frame at a time so the output is exactly X frames at a fixed rate,
+  // regardless of how long each (possibly heavy) frame takes to compute
+  const mime = pickMime();
+  const stream = canvas.captureStream(0);
+  const track = stream.getVideoTracks()[0];
+  const chunks = [];
+  const recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 24_000_000 });
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  const finished = new Promise(res => {
+    recorder.onstop = () => {
+      const type = chunks[0]?.type || mime || 'video/webm';
+      const blob = new Blob(chunks, { type });
+      const ext = extFor(type);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.href = url; a.download = `dropping_balls_render_${ts}.${ext}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      res();
+    };
+  });
+
+  // start from the original drop with a clean canvas
+  restore(initState);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+
+  renderStop = () => { aborted = true; };
+  recorder.start();
+  let next = performance.now();
+  const t0 = performance.now();
+  for (let f = 0; f < X; f++) {
+    if (aborted) break;
+    if (bg > 0) computeBallGravity(bg);
+    stepRender(dtEff, p.grav, p.rest, bg);
+    render(p);
+    track.requestFrame();
+    if ((f & 3) === 0 || f === X - 1) {
+      const pct = ((f + 1) / X * 100).toFixed(0);
+      el('rprog').textContent = `Rendering ${f + 1} / ${X} (${pct}%)${bg > 0 ? ' · ball gravity on' : ''}`;
+    }
+    next += 1000 / FPS;                  // pace to real-time 60fps when we can keep up
+    const wait = next - performance.now();
+    await sleep(wait > 1 ? wait : 0);    // always yield so the UI/abort can run
+  }
+  recorder.stop();
+  await finished;
+
+  // back to the live simulation, right where the user left it
+  restore(saved); frameIdx = savedFrame;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  rendering = false; renderStop = null;
+  el('render').textContent = '⛶ Render first N frames → video';
+  el('rprog').textContent = aborted ? 'Render stopped.' : 'Render complete — saved.';
+  setTimeout(() => { if (!rendering) el('rprog').style.display = 'none'; }, 3500);
+}
+
 // ---------- wiring ----------
 function hidePanel(hide) {
   document.getElementById('panel').classList.toggle('collapsed', hide);
@@ -612,6 +778,8 @@ el('pause').addEventListener('click', () => {
 });
 el('rewind').addEventListener('click', () => setRewind(!rewinding));
 el('record').addEventListener('click', toggleRecord);
+el('render').addEventListener('click', renderVideo);
+el('rframes').addEventListener('input', refreshLabels);
 el('snap').addEventListener('click', savePNG);
 el('hidePanel').addEventListener('click', () => hidePanel(true));
 el('toggleBtn').addEventListener('click', () => hidePanel(false));
